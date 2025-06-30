@@ -1,0 +1,33 @@
+{
+  "dependencies": {
+    "axios": "^1.10.0",
+    "bcrypt": "^6.0.0",
+    "compute-cosine-similarity": "^1.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "express-validator": "^7.2.1",
+    "ffmpeg-static": "^4.4.1",
+    "fluent-ffmpeg": "^2.1.3",
+    "form-data": "^4.0.3",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.15.2",
+    "multer": "^2.0.1"
+  },
+  "name": "backend",
+  "version": "1.0.0",
+  "main": "server.js",
+ "scripts": {
+  "start": "node server.js",
+  "stt": "cd stt_env && flask run --port=5001",
+  "voiceprint": "cd voiceprint_env && flask run --port=5002",
+  "dev": "concurrently \"npm run stt\" \"npm run voiceprint\" \"npm start\""
+},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  }
+}

@@ -1,0 +1,21 @@
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+whisperenv/
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
+
+# System files
+.DS_Store
+
+# DB
+*.sqlite3
