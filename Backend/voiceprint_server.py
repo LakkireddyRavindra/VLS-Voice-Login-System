@@ -4,6 +4,9 @@ from resemblyzer import VoiceEncoder, preprocess_wav
 import numpy as np
 import io
 import soundfile as sf
+from pydub import AudioSegment
+import tempfile
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -16,18 +19,31 @@ def voiceprint():
         return jsonify({"error": "No voice file uploaded"}), 400
 
     voice_file = request.files['voice']
-    wav_bytes = voice_file.read()
-    wav_stream = io.BytesIO(wav_bytes)
 
+    # Convert to WAV format using pydub
     try:
-        wav_np, sr = sf.read(wav_stream)
+        original = AudioSegment.from_file(voice_file)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
+            original.export(temp_wav.name, format="wav")
+            temp_path = temp_wav.name
+
+        # Read converted .wav file
+        wav_np, sr = sf.read(temp_path)
         if wav_np.ndim > 1:
-            wav_np = np.mean(wav_np, axis=1)  # convert to mono if stereo
+            wav_np = np.mean(wav_np, axis=1)  # Convert to mono
         wav_np = wav_np.astype(np.float32)
+
+        # Generate embedding
         embedding = encoder.embed_utterance(wav_np)
         return jsonify({"embedding": embedding.tolist()})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+    finally:
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5002)

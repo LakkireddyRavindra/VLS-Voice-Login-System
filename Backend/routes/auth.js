@@ -1,28 +1,46 @@
 const express = require('express');
 const router = express.Router();
-const User = require('../models/User');
+const { User, VoiceProfile } = require('../models/User');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 
 const { validateRegister, validateLogin } = require('../middleware/validate');
-// Already imported: validateRegister, validateLogin
-
 
 // 🆕 POST /api/auth/register
 router.post('/register', validateRegister, async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { firstName, lastName, email, password } = req.body;
 
         const existing = await User.findOne({ email });
         if (existing) return res.status(400).json({ error: 'Email already in use' });
 
-        const user = new User({ email, password });
+        const user = new User({ firstName, lastName, email, password });
+        await user.save();
+
+        const accessToken = jwt.sign(
+            { userId: user._id },
+            process.env.JWT_SECRET,
+            { expiresIn: '15m' }
+        );
+
+        const refreshToken = jwt.sign(
+            { userId: user._id },
+            process.env.JWT_REFRESH_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        user.refreshToken = refreshToken;
         await user.save();
 
         res.status(201).json({
             message: 'User registered successfully',
-            userId: user._id
+            accessToken,
+            refreshToken,
+            userId: user._id,
+            email: user.email,
+            name: `${user.firstName} ${user.lastName}`
         });
+
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -53,11 +71,18 @@ router.post('/login', validateLogin, async (req, res) => {
         user.refreshToken = refreshToken;
         await user.save();
 
-        res.status(200).json({ accessToken, refreshToken, userId: user._id });
+        res.status(200).json({
+            accessToken,
+            refreshToken,
+            userId: user._id,
+            email: user.email,
+            name: `${user.firstName} ${user.lastName}` // 👈 include name
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
+
 
 // 🔁 POST /api/auth/refresh-token
 router.post('/refresh-token', async (req, res) => {

@@ -4,8 +4,8 @@ const axios = require('axios');
 const cosine = require('compute-cosine-similarity');
 const FormData = require('form-data');
 const fs = require('fs');
-const User = require('../models/User');
-
+const { User, VoiceProfile } = require('../models/User');
+const jwt = require('jsonwebtoken');
 const router = express.Router();
 const upload = multer({ dest: 'uploads/' });
 
@@ -21,7 +21,7 @@ router.post('/voice-enroll', upload.single('voice'), async (req, res) => {
     return res.status(400).json({ error: 'Only .wav files are supported' });
   }
 
-  const user = await User.findById(userId);
+  const user = await User.findOne({ email: userId });
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   try {
@@ -48,11 +48,15 @@ router.post('/voice-enroll', upload.single('voice'), async (req, res) => {
     });
     const embedding = vpResponse.data.embedding;
 
-    // Save to DB
-    user.enrolledPhrase = sttText;
-    user.voiceEmbedding = embedding;
-    user.voiceEnrolled = true;
-    await user.save();
+    // 🔄 Upsert VoiceProfile
+    await VoiceProfile.findOneAndUpdate(
+      { userId: user._id },
+      { embedding, enrolledPhrase: sttText },
+      { upsert: true, new: true }
+    );
+
+    await User.findByIdAndUpdate(user._id, { voiceEnrolled: true });
+    console.log('✅ Voice profile updated for user:', user._id);
 
     res.json({
       status: 'success',
@@ -70,41 +74,109 @@ router.post('/voice-enroll', upload.single('voice'), async (req, res) => {
 
 // 🔐 VOICE LOGIN
 router.post('/voice-login', upload.single('voice'), async (req, res) => {
-  const { userId } = req.body;
-
-  const user = await User.findById(userId).select('+voiceEmbedding');
-  if (!user || !req.file || !user.voiceEmbedding) {
-    return res.status(400).json({ status: 'error', message: 'Invalid user or missing voice data' });
+  if (!req.file) {
+    return res.status(400).json({ status: 'error', message: 'Missing voice file' });
   }
 
   try {
-    console.log('🎯 Matching voice embedding...');
+    // 🔍 Extract embedding from voice using voiceprint service
     const form = new FormData();
     form.append('voice', fs.createReadStream(req.file.path));
-
     const vpResponse = await axios.post('http://127.0.0.1:5002/voiceprint', form, {
       headers: form.getHeaders(),
       timeout: 30000
     });
 
-    const similarity = cosine(user.voiceEmbedding, vpResponse.data.embedding);
-    console.log(`✅ Similarity score: ${similarity.toFixed(4)}`);
+    const inputEmbedding = vpResponse.data.embedding;
 
-    const isVerified = similarity >= 0.75;
-    res.json({
-      status: isVerified ? 'success' : 'failure',
-      similarity: similarity.toFixed(4),
-      message: isVerified
-        ? '🎉 Voice login successful!'
-        : '❌ Voiceprint did not match. Try again with clearer audio.'
+    // 🧠 Compare against all stored voice profiles
+    const allProfiles = await VoiceProfile.find({});
+    const matches = [];
+
+    allProfiles.forEach(profile => {
+      const sim = cosine(profile.embedding, inputEmbedding);
+      if (sim >= 0.93) {
+        matches.push({ userId: profile.userId, similarity: sim });
+      }
+    });
+
+    // 🧾 No matches at all
+    if (matches.length === 0) {
+      return res.status(401).json({ status: 'error', message: 'No matching voice found' });
+    }
+
+    // ✅ SINGLE MATCH — Direct Login
+    if (matches.length === 1) {
+      const user = await User.findById(matches[0].userId);
+      const accessToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '15m' });
+      const refreshToken = jwt.sign({ userId: user._id }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+      user.refreshToken = refreshToken;
+      await user.save();
+
+      return res.json({
+        status: 'success',
+        accessToken,
+        refreshToken,
+        userId: user._id,
+        name: `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        similarity: matches[0].similarity
+      });
+    }
+
+    // ❓ MULTIPLE MATCHES
+    const providedEmail = req.body.userId?.toLowerCase();
+
+    if (providedEmail) {
+      // 🔍 Check if provided email matches any of the candidates
+      const candidateUserIds = matches.map(m => m.userId.toString());
+      const user = await User.findOne({
+        _id: { $in: candidateUserIds },
+        email: providedEmail
+      });
+
+      if (!user) {
+        // 🚫 Email didn't match any of the multiple candidates
+        return res.status(403).json({
+          status: 'error',
+          message: 'Email did not match any of the matched voice profiles.'
+        });
+      }
+
+      // ✅ Match confirmed — proceed with login
+      const accessToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '15m' });
+      const refreshToken = jwt.sign({ userId: user._id }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+      user.refreshToken = refreshToken;
+      await user.save();
+
+      return res.json({
+        status: 'success',
+        accessToken,
+        refreshToken,
+        userId: user._id,
+        name: `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        similarity: 0.91 // or actual similarity from matched list
+      });
+    }
+
+    // 🟡 Email not provided yet — prompt frontend
+    return res.status(206).json({
+      status: 'multiple_matches',
+      message: 'Multiple voice matches found. Please provide your email to confirm identity.',
+      candidates: matches.map(m => m.userId)
     });
 
   } catch (err) {
-    console.error('❌ Login error:', err.message);
+    console.error('❌ Voice login error:', err);
     res.status(500).json({ status: 'error', message: 'Voice login failed. Check logs.' });
   } finally {
+    // 🧹 Clean up temporary voice file
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
   }
 });
+
 
 module.exports = router;

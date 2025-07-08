@@ -10,6 +10,7 @@ const voiceRoutes = require('./routes/voice_hybrid');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const upload = multer({ dest: 'uploads/' });
+const userRoutes = require('./routes/user');
 
 // 🔐 Global Error Handling
 process.on('unhandledRejection', err => {
@@ -21,13 +22,15 @@ process.on('uncaughtException', err => {
 });
 
 // ✅ Middleware
-app.use(cors());
+app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ✅ Routes
 app.use('/api/auth', authRoutes);
 app.use('/api', voiceRoutes);
+app.use('/api/user', userRoutes);
+
 
 // 🔊 Dummy Voice Login Stub (If still used)
 app.post('/api/voice-login', upload.single('voice'), async (req, res) => {
